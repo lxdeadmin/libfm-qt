@@ -31,7 +31,26 @@ bool BasicFileLauncher::launchFiles(const FileInfoList& fileInfos, GAppLaunchCon
     for(auto& fileInfo : fileInfos) {
         // qDebug("path: %s, target: %s", fileInfo->path().toString().get(), fileInfo->target().c_str());
         if(fileInfo->isDir()) {
-            folderInfos.emplace_back(fileInfo);
+            if(!fileInfo->target().empty()) {
+                FilePath path;
+                if(CStrPtr{g_uri_parse_scheme(fileInfo->target().c_str())}) {
+                    path = FilePath::fromUri(fileInfo->target().c_str());
+                    GErrorPtr err{G_IO_ERROR, G_IO_ERROR_NOT_MOUNTED,
+                                  QObject::tr("The path is not mounted.")};
+                    if(!showError(ctx, err, path, fileInfo)) {
+                        continue;
+                    }
+                }
+                else {
+                    path = FilePath::fromLocalPath(fileInfo->target().c_str());
+                }
+                if(path.isValid()) {
+                    pathsToLaunch.emplace_back(path);
+                }
+            }
+            else {
+                folderInfos.emplace_back(fileInfo);
+            }
         }
         else if(fileInfo->isMountable()) {
             if(fileInfo->target().empty()) {
@@ -256,18 +275,25 @@ FilePath BasicFileLauncher::handleShortcut(const FileInfoPtr& fileInfo, GAppLaun
                 || strcmp(scheme.get(), "trash") == 0
                 || strcmp(scheme.get(), "network") == 0
                 || strcmp(scheme.get(), "computer") == 0) {
-            return FilePath::fromUri(fileInfo->target().c_str());
+            return FilePath::fromUri(target.c_str());
         }
         else {
             // ask gio to launch the default handler for the uri scheme
-            GAppInfoPtr app{g_app_info_get_default_for_uri_scheme(scheme.get()), false};
-            FilePathList uris{FilePath::fromUri(fileInfo->target().c_str())};
-            launchWithApp(app.get(), uris, ctx);
+            if(GAppInfoPtr app{g_app_info_get_default_for_uri_scheme(scheme.get()), false}) {
+                FilePathList uris{FilePath::fromUri(target.c_str())};
+                launchWithApp(app.get(), uris, ctx);
+            }
+            else {
+                GErrorPtr err{G_IO_ERROR, G_IO_ERROR_FAILED,
+                              QObject::tr("No default application is set to launch '%1'")
+                              .arg(target.c_str())};
+                showError(nullptr, err);
+            }
         }
     }
     else {
         // see it as a local path
-        return FilePath::fromLocalPath(fileInfo->target().c_str());
+        return FilePath::fromLocalPath(target.c_str());
     }
     return FilePath();
 }
